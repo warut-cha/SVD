@@ -24,42 +24,54 @@ class SVDNet(nn.Module):
         self.N = N
         self.r = r
 
-        first_conv_out_channels = 16
+        first_conv_out_channels = 8
         second_conv_out_channels = 32
         m_after_conv = M // 4
         n_after_conv = N // 4
         size_after_conv = second_conv_out_channels * m_after_conv * n_after_conv
+        size_after_fc_1 = size_after_conv // 2
+        size_after_fc_2 = size_after_fc_1 // 2
 
         self.backbone = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=2, out_channels=first_conv_out_channels, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2),
 
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=first_conv_out_channels, out_channels=second_conv_out_channels, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2),
 
             nn.Flatten()
         )
 
-        self.u_head = nn.Linear(size_after_conv, M * r * 2)
-        self.s_head = nn.Linear(size_after_conv, r)
-        self.v_head = nn.Linear(size_after_conv, N * r * 2)
+        self.fc_hidden = nn.Sequential(
+            nn.Linear(size_after_conv, size_after_fc_1),
+            nn.ReLU(),
+            nn.Linear(size_after_fc_1, size_after_fc_2),
+            nn.ReLU(),
+        )
+
+        in_size= size_after_fc_2
+        self.u_head = nn.Linear(in_size, M * r * 2)
+        self.s_head = nn.Linear(in_size, r)
+        self.v_head = nn.Linear(in_size, N * r * 2)
 
         self.s_activation = nn.Softplus()
+
 
     def forward(self, x):
         x = x.permute(0, 3, 1, 2)  # -> (batch, 2, M, N)
 
         features = self.backbone(x)
+        hidden = self.fc_hidden(features)
 
-        u_flat = self.u_head(features)
+        u_flat = self.u_head(hidden)
         U = u_flat.view(-1, self.M, self.r, 2)
 
-        s_raw = self.s_head(features)
+        s_raw = self.s_head(hidden)
         s = self.s_activation(s_raw)
 
-        v_flat = self.v_head(features)
+        v_flat = self.v_head(hidden)
         V = v_flat.view(-1, self.N, self.r, 2)
 
         return U, s, V
@@ -142,8 +154,8 @@ def split_dataset(x_np, y_np, test_size=0.2, random_state=42):
 def train():
     BATCH_SIZE = 64
     TEST_RATIO = 0.2
-    NUM_EPOCHS = 5
-    LEARNING_RATE = 1e-6
+    NUM_EPOCHS = 20
+    LEARNING_RATE = 1e-4
     M, N, Q, r = 64, 64, 2, 32
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -161,7 +173,7 @@ def train():
 
     model = SVDNet(M=M, N=N, r=r).to(device)
     loss_fn = ApproximationErrorLoss().to(device)
-    optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     print("--- Starting Training ---")
     for epoch in range(NUM_EPOCHS):
