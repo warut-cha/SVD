@@ -1,2 +1,7 @@
 CompetitionData1/
 .env
+*.zip
+.*
+*.pth
+*.npz
+*.pyc
