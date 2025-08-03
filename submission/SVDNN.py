@@ -2,7 +2,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
+from sklearn.model_selection import train_test_split
 
 
 def complex_matmul(A, B):
@@ -22,42 +24,54 @@ class SVDNet(nn.Module):
         self.N = N
         self.r = r
 
-        first_conv_out_channels = 16
+        first_conv_out_channels = 8
         second_conv_out_channels = 32
         m_after_conv = M // 4
         n_after_conv = N // 4
         size_after_conv = second_conv_out_channels * m_after_conv * n_after_conv
+        size_after_fc_1 = size_after_conv // 2
+        size_after_fc_2 = size_after_fc_1 // 2
 
         self.backbone = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=16, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=2, out_channels=first_conv_out_channels, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2),
 
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=first_conv_out_channels, out_channels=second_conv_out_channels, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2),
 
             nn.Flatten()
         )
 
-        self.u_head = nn.Linear(size_after_conv, M * r * 2)
-        self.s_head = nn.Linear(size_after_conv, r)
-        self.v_head = nn.Linear(size_after_conv, N * r * 2)
+        self.fc_hidden = nn.Sequential(
+            nn.Linear(size_after_conv, size_after_fc_1),
+            nn.ReLU(),
+            nn.Linear(size_after_fc_1, size_after_fc_2),
+            nn.ReLU(),
+        )
+
+        in_size= size_after_fc_2
+        self.u_head = nn.Linear(in_size, M * r * 2)
+        self.s_head = nn.Linear(in_size, r)
+        self.v_head = nn.Linear(in_size, N * r * 2)
 
         self.s_activation = nn.Softplus()
+
 
     def forward(self, x):
         x = x.permute(0, 3, 1, 2)  # -> (batch, 2, M, N)
 
         features = self.backbone(x)
+        hidden = self.fc_hidden(features)
 
-        u_flat = self.u_head(features)
+        u_flat = self.u_head(hidden)
         U = u_flat.view(-1, self.M, self.r, 2)
 
-        s_raw = self.s_head(features)
+        s_raw = self.s_head(hidden)
         s = self.s_activation(s_raw)
 
-        v_flat = self.v_head(features)
+        v_flat = self.v_head(hidden)
         V = v_flat.view(-1, self.N, self.r, 2)
 
         return U, s, V
@@ -108,13 +122,43 @@ class ApproximationErrorLoss(nn.Module):
         return total_loss
 
 
+
+def split_dataset(x_np, y_np, test_size=0.2, random_state=42):
+    """
+    Splits numpy arrays into PyTorch TensorDatasets for training and testing.
+
+    Args:
+        x_np: numpy array of input data
+        y_np: numpy array of labels
+        test_size: fraction for test set
+        random_state: reproducibility seed
+
+    Returns:
+        train_dataset, test_dataset (both TensorDataset)
+    """
+    x_train, x_test, y_train, y_test = train_test_split(
+        x_np, y_np, test_size=test_size, random_state=random_state
+    )
+
+    x_train_tensor = torch.from_numpy(x_train).float()
+    y_train_tensor = torch.from_numpy(y_train).float()
+    x_test_tensor = torch.from_numpy(x_test).float()
+    y_test_tensor = torch.from_numpy(y_test).float()
+
+    train_dataset = TensorDataset(x_train_tensor, y_train_tensor)
+    test_dataset = TensorDataset(x_test_tensor, y_test_tensor)
+
+    return train_dataset, test_dataset
+
+
 def train():
     BATCH_SIZE = 64
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # device = torch.device("cpu")  # Force CPU for compatibility
-    print(f"Using device: {device}")
-
+    TEST_RATIO = 0.2
+    NUM_EPOCHS = 20
+    LEARNING_RATE = 1e-4
     M, N, Q, r = 64, 64, 2, 32
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
     x = 1
     train_np = np.load(f'./CompetitionData1/Round1TrainData1.npy')  # y = Hr + noise
@@ -122,17 +166,18 @@ def train():
     train = torch.from_numpy(train_np).float()
     label = torch.from_numpy(label_np).float()
 
-    dataset = torch.utils.data.TensorDataset(train, label)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+    train_dataset, test_dataset = split_dataset(train_np, label_np, test_size=TEST_RATIO)
+
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
 
     model = SVDNet(M=M, N=N, r=r).to(device)
     loss_fn = ApproximationErrorLoss().to(device)
-    optimizer = torch.optim.SGD(model.parameters(), lr=1e-6)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     print("--- Starting Training ---")
-    num_epochs = 5
-    for epoch in range(num_epochs):
-        for i, (h_noise, h_label) in tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch + 1}/{num_epochs}"):
+    for epoch in range(NUM_EPOCHS):
+        for i, (h_noise, h_label) in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch + 1}/{NUM_EPOCHS}"):
             h_noise = h_noise.to(device)
             h_label = h_label.to(device)
             optimizer.zero_grad()
@@ -144,10 +189,22 @@ def train():
             loss.backward()
             optimizer.step()
 
-        print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}")
+        print(f"Epoch [{epoch + 1}/{NUM_EPOCHS}], Loss: {loss.item():.4f}")
 
     print("--- Training Finished ---")
     torch.save(model.state_dict(), 'SVDNet_model.pth')
+
+    model.eval()
+    total_test_loss = 0
+    with torch.no_grad():
+        for h_noise, h_label in test_loader:
+            h_noise = h_noise.to(device)
+            h_label = h_label.to(device)
+            U_pred, s_pred, V_pred = model(h_noise)
+            loss = loss_fn(U_pred, s_pred, V_pred, h_label)
+            total_test_loss += loss.item()
+
+    print(f"✅ Mean Test Loss: {total_test_loss / len(test_loader):.4f}")
 
 
 if __name__ == "__main__":

@@ -1,22 +1,20 @@
 import torch
 import numpy as np
+
 from SVDNN import SVDNet
-from fvcore.nn import FlopCountAnalysis
+from mac_calc import estimate_model_complexity
 
 
 def test_model(model_path: str, test_data_path: str, file_name: str):
-    # Define model architecture (same as training)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = SVDNet(M=64, N=64, r=32)  # Use same M, N, r as before
+    print(f"Using device: {device}")
+    model = SVDNet(M=64, N=64, r=32).to(device)  # Use same M, N, r as before
     state_dict = torch.load(model_path, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
-    model.eval()  # Put in inference mode
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
+    model.eval()
 
     test_np = np.load(test_data_path)  # shape: (B, M, N, 2)
-    test_tensor = torch.from_numpy(test_np).float().to(device)
+    test_tensor = torch.from_numpy(test_np).float()
 
     test_dataset = torch.utils.data.TensorDataset(test_tensor)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=4)
@@ -41,21 +39,18 @@ def test_model(model_path: str, test_data_path: str, file_name: str):
     s_np = s_all.numpy()
     V_np = V_all.numpy()
 
-    # Estimate MACs using dummy input
-    dummy_input = torch.randn(1, 64, 64, 2).to(device)
-    flops = FlopCountAnalysis(model, dummy_input)
-    macs = flops.total() / 2
-    mega_macs = macs / 1e6  # Convert to Mega MACs
+    # Estimate model complexity
+    mega_macs = estimate_model_complexity(model)
 
     # Save each to a separate .npz file
-    np.savez(f"{file_name}.npz", U=U_np, S=s_np, V=V_np, M=mega_macs)
+    np.savez(f"{file_name}.npz", U=U_np, S=s_np, V=V_np, C=mega_macs)
 
 
 if __name__ == "__main__":
     model_path = 'SVDNet_model.pth'
     test_data_path = './CompetitionData1/Round1TestData1.npy'
     test_model(model_path, test_data_path, "submission/1")
-    # test_data_path = './CompetitionData1/Round1TestData2.npy'
-    # test_model(model_path, test_data_path, "submission/2")
-    # test_data_path = './CompetitionData1/Round1TestData3.npy'
-    # test_model(model_path, test_data_path, "submission/3")
+    test_data_path = './CompetitionData1/Round1TestData2.npy'
+    test_model(model_path, test_data_path, "submission/2")
+    test_data_path = './CompetitionData1/Round1TestData3.npy'
+    test_model(model_path, test_data_path, "submission/3")
