@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, Dataset
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 
@@ -86,6 +86,28 @@ class SVDNet(nn.Module):
         V = v_flat.view(-1, self.N, self.r, 2)
 
         return U, s, V
+
+
+class NormalizedChannelDataset(Dataset):
+    def __init__(self, data, labels, mean, std):
+        self.data = data
+        self.labels = labels
+        self.mean = mean
+        self.std = std
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        # Get the raw data and label
+        x = self.data[idx]
+        y = self.labels[idx]
+
+        # Apply the pre-calculated normalization
+        x_normalized = (x - self.mean) / (self.std + 1e-8)
+
+        # Convert to tensors
+        return torch.from_numpy(x_normalized).float(), torch.from_numpy(y).float()
 
 
 class ApproximationErrorLoss(nn.Module):
@@ -192,9 +214,21 @@ def train(model: nn.Module, test_data_path: str, label_data_path: str, model_nam
     """
     device = next(model.parameters()).device
 
-    # Load and split data
-    train_np, label_np = load_combined_data()
-    train_dataset, test_dataset = split_dataset(train_np, label_np, test_size=TEST_RATIO)
+    x = 1
+    # train_np = np.load(test_data_path)  # y = Hr + noise
+    # label_np = np.load(label_data_path)
+    all_data_np, all_labels_np = load_combined_data()
+
+    # 2. Split into training and testing sets
+    train_np, test_np, train_labels_np, test_labels_np = train_test_split(
+        all_data_np, all_labels_np, test_size=TEST_RATIO
+    )
+
+    mean = np.mean(train_np)
+    std = np.std(train_np)
+
+    train_dataset = NormalizedChannelDataset(train_np, train_labels_np, mean, std)
+    test_dataset = NormalizedChannelDataset(test_np, test_labels_np, mean, std)
 
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
@@ -258,3 +292,4 @@ if __name__ == "__main__":
     for i in range(1, 4):
         test_data_path = f'./CompetitionData1/Round1TestData{i}.npy'
         test_model(model, test_data_path, f"submission/{i}")
+

@@ -1,6 +1,5 @@
 from torch import nn
 
-
 class SVDNet3Layer(nn.Module):
     def __init__(self, M, N, r):
         super(SVDNet3Layer, self).__init__()
@@ -20,14 +19,17 @@ class SVDNet3Layer(nn.Module):
 
         self.backbone = nn.Sequential(
             nn.Conv2d(in_channels=2, out_channels=first_conv_out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(first_conv_out_channels),
             nn.ReLU(),
             nn.MaxPool2d(2),
 
             nn.Conv2d(in_channels=first_conv_out_channels, out_channels=second_conv_out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(second_conv_out_channels),
             nn.ReLU(),
             nn.MaxPool2d(2),
 
             nn.Conv2d(in_channels=second_conv_out_channels, out_channels=third_conv_out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(third_conv_out_channels),
             nn.ReLU(),
             nn.MaxPool2d(2),
 
