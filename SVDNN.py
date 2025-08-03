@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, Dataset
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 
@@ -280,3 +280,4 @@ if __name__ == "__main__":
     for i in range(1, 4):
         test_data_path = f'./CompetitionData1/Round1TestData{i}.npy'
         test_model(model, test_data_path, f"submission/{i}")
+
