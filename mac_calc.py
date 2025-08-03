@@ -26,3 +26,13 @@ def estimate_model_complexity(model: torch.nn.Module) -> float:
     mega_macs = total_macs / 1e6
 
     return mega_macs
+
+
+if __name__ == "__main__":
+    from models.SVD_3layer import SVDNet3Layer
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = SVDNet3Layer(M=64, N=64, r=32).to(device)  # Example dimensions
+
+    mega_macs = estimate_model_complexity(model)
+    print(f"Estimated MACs: {mega_macs:.2f} MegaMACs")

@@ -1,16 +1,30 @@
 import torch
 import numpy as np
 
-from SVDNN import SVDNet
 from mac_calc import estimate_model_complexity
+from torch import nn
+
+from models import SVDNetPrune
 
 
-def test_model(model_path: str, test_data_path: str, file_name: str):
+def fix_rank(tensor, target_r, dim):
+    current_r = tensor.shape[dim]
+    if current_r > target_r:
+        return tensor.narrow(dim, 0, target_r)  # Truncate
+    elif current_r < target_r:
+        pad_shape = list(tensor.shape)
+        pad_shape[dim] = target_r - current_r
+        pad_tensor = torch.zeros(*pad_shape, dtype=tensor.dtype, device=tensor.device)
+        return torch.cat([tensor, pad_tensor], dim=dim)
+    else:
+        return tensor
+
+
+def test_model(model: nn.Module, test_data_path: str, file_name: str):
+    FIXED_R = 32
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    model = SVDNet(M=64, N=64, r=32).to(device)  # Use same M, N, r as before
-    state_dict = torch.load(model_path, map_location=device, weights_only=True)
-    model.load_state_dict(state_dict)
     model.eval()
 
     test_np = np.load(test_data_path)  # shape: (B, M, N, 2)
@@ -25,6 +39,12 @@ def test_model(model_path: str, test_data_path: str, file_name: str):
         for (h_test,) in test_loader:
             h_test = h_test.to(device)
             U, s, V = model(h_test)
+            # Pad or truncate to FIXED_R
+
+            # U_fixed = fix_rank(U, FIXED_R, dim=2) # (B, M, FIXED_R, Q)
+            # s_fixed = fix_rank(s, FIXED_R, dim=1) # (B, FIXED_R)
+            # V_fixed = fix_rank(V, FIXED_R, dim=2) # (B, N, FIXED_R, Q)
+
             U_list.append(U.cpu())
             s_list.append(s.cpu())
             V_list.append(V.cpu())
@@ -41,6 +61,7 @@ def test_model(model_path: str, test_data_path: str, file_name: str):
 
     # Estimate model complexity
     mega_macs = estimate_model_complexity(model)
+    print(f"Estimated MACs: {mega_macs:.2f} MegaMACs")
 
     # Save each to a separate .npz file
     np.savez(f"{file_name}.npz", U=U_np, S=s_np, V=V_np, C=mega_macs)
@@ -48,9 +69,12 @@ def test_model(model_path: str, test_data_path: str, file_name: str):
 
 if __name__ == "__main__":
     model_path = 'SVDNet_model.pth'
-    test_data_path = './CompetitionData1/Round1TestData1.npy'
-    test_model(model_path, test_data_path, "submission/1")
-    test_data_path = './CompetitionData1/Round1TestData2.npy'
-    test_model(model_path, test_data_path, "submission/2")
-    test_data_path = './CompetitionData1/Round1TestData3.npy'
-    test_model(model_path, test_data_path, "submission/3")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = SVDNetPrune(M=64, N=64, r=16).to(device)  # Use same M, N, r as before
+    state_dict = torch.load(model_path, map_location=device, weights_only=True)
+    model.load_state_dict(state_dict)
+
+    for i in range(1, 4):
+        test_data_path = f'./CompetitionData1/Round1TestData{i}.npy'
+        test_model(model, test_data_path, f"submission/{i}")

@@ -6,6 +6,17 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 
+from models.SVD_3layer import SVDNet3Layer
+from models.SVD_prune import SVDNetPrune
+from test_SVDNN import test_model
+
+
+BATCH_SIZE = 64
+TEST_RATIO = 0.2
+NUM_EPOCHS = 30
+LEARNING_RATE = 1e-4
+M, N, Q, r = 64, 64, 2, 32
+
 
 def complex_matmul(A, B):
     real_part = A[..., 0] @ B[..., 0] - A[..., 1] @ B[..., 1]
@@ -122,7 +133,6 @@ class ApproximationErrorLoss(nn.Module):
         return total_loss
 
 
-
 def split_dataset(x_np, y_np, test_size=0.2, random_state=42):
     """
     Splits numpy arrays into PyTorch TensorDatasets for training and testing.
@@ -151,27 +161,47 @@ def split_dataset(x_np, y_np, test_size=0.2, random_state=42):
     return train_dataset, test_dataset
 
 
-def train():
-    BATCH_SIZE = 64
-    TEST_RATIO = 0.2
-    NUM_EPOCHS = 20
-    LEARNING_RATE = 1e-4
-    M, N, Q, r = 64, 64, 2, 32
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+def load_combined_data():
+    train_list = []
+    label_list = []
+
+    for i in range(1, 4):
+        train_np = np.load(f'./CompetitionData1/Round1TrainData{i}.npy')
+        label_np = np.load(f'./CompetitionData1/Round1TrainLabel{i}.npy')
+        train_list.append(train_np)
+        label_list.append(label_np)
+
+    combined_train = np.concatenate(train_list, axis=0)  # Concatenate along batch dim
+    combined_label = np.concatenate(label_list, axis=0)
+
+    return combined_train, combined_label
+
+
+def train(model: nn.Module, test_data_path: str, label_data_path: str):
+    """
+    Trains the SVDNet model.
+
+    Args:
+        model (nn.Module): The model to train.
+
+    Example:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {device}")
+        model = SVDNet(M=M, N=N, r=r).to(device)
+        train(model)
+    """
+    device = next(model.parameters()).device
 
     x = 1
-    train_np = np.load(f'./CompetitionData1/Round1TrainData1.npy')  # y = Hr + noise
-    label_np = np.load(f'./CompetitionData1/Round1TrainLabel1.npy')
-    train = torch.from_numpy(train_np).float()
-    label = torch.from_numpy(label_np).float()
+    # train_np = np.load(test_data_path)  # y = Hr + noise
+    # label_np = np.load(label_data_path)
+    train_np, label_np = load_combined_data()  # Load combined training data
 
     train_dataset, test_dataset = split_dataset(train_np, label_np, test_size=TEST_RATIO)
 
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
 
-    model = SVDNet(M=M, N=N, r=r).to(device)
     loss_fn = ApproximationErrorLoss().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
@@ -204,8 +234,18 @@ def train():
             loss = loss_fn(U_pred, s_pred, V_pred, h_label)
             total_test_loss += loss.item()
 
-    print(f"✅ Mean Test Loss: {total_test_loss / len(test_loader):.4f}")
+    print(f"Mean Test Loss: {total_test_loss / len(test_loader):.4f}")
 
 
 if __name__ == "__main__":
-    train()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    model_path = 'SVDNet_model.pth'
+    model = SVDNet3Layer(M=M, N=N, r=r).to(device)
+    train(model,
+          test_data_path=f'./CompetitionData1/Round1TrainData1.npy',
+          label_data_path=f'./CompetitionData1/Round1TrainLabel1.npy')
+    for i in range(1, 4):
+        test_data_path = f'./CompetitionData1/Round1TestData{i}.npy'
+        test_model(model, test_data_path, f"submission/{i}")
