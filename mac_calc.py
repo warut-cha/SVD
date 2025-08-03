@@ -2,6 +2,8 @@ import torch
 
 from torch.profiler import profile, record_function, ProfilerActivity
 
+from models.SVD_3layer import SVDNet3C2L
+
 
 def estimate_model_complexity(model: torch.nn.Module) -> float:
     _ = model.eval()
@@ -32,7 +34,7 @@ if __name__ == "__main__":
     from models.SVD_3layer import SVDNet3Layer
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = SVDNet3Layer(M=64, N=64, r=32).to(device)  # Example dimensions
+    model = SVDNet3C2L(M=64, N=64, r=32).to(device)  # Example dimensions
 
     mega_macs = estimate_model_complexity(model)
     print(f"Estimated MACs: {mega_macs:.2f} MegaMACs")

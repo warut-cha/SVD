@@ -6,14 +6,14 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 
-from models.SVD_3layer import SVDNet3Layer
+from models.SVD_3layer import SVDNet3C2L, SVDNet3Layer
 from models.SVD_prune import SVDNetPrune
 from test_SVDNN import test_model
 
 
 BATCH_SIZE = 64
 TEST_RATIO = 0.2
-NUM_EPOCHS = 30
+NUM_EPOCHS = 40
 LEARNING_RATE = 1e-4
 M, N, Q, r = 64, 64, 2, 32
 
@@ -177,7 +177,7 @@ def load_combined_data():
     return combined_train, combined_label
 
 
-def train(model: nn.Module, test_data_path: str, label_data_path: str):
+def train(model: nn.Module, test_data_path: str, label_data_path: str, model_name='SVDNet'):
     """
     Trains the SVDNet model.
 
@@ -192,11 +192,8 @@ def train(model: nn.Module, test_data_path: str, label_data_path: str):
     """
     device = next(model.parameters()).device
 
-    x = 1
-    # train_np = np.load(test_data_path)  # y = Hr + noise
-    # label_np = np.load(label_data_path)
-    train_np, label_np = load_combined_data()  # Load combined training data
-
+    # Load and split data
+    train_np, label_np = load_combined_data()
     train_dataset, test_dataset = split_dataset(train_np, label_np, test_size=TEST_RATIO)
 
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
@@ -205,36 +202,47 @@ def train(model: nn.Module, test_data_path: str, label_data_path: str):
     loss_fn = ApproximationErrorLoss().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
+    best_loss = float('inf')
+    best_state_dict = None
+
     print("--- Starting Training ---")
     for epoch in range(NUM_EPOCHS):
+        model.train()
         for i, (h_noise, h_label) in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch + 1}/{NUM_EPOCHS}"):
             h_noise = h_noise.to(device)
             h_label = h_label.to(device)
+
             optimizer.zero_grad()
-
             U_pred, s_pred, V_pred = model(h_noise)
-
             loss = loss_fn(U_pred, s_pred, V_pred, h_label)
 
             loss.backward()
             optimizer.step()
 
-        print(f"Epoch [{epoch + 1}/{NUM_EPOCHS}], Loss: {loss.item():.4f}")
+        # Evaluate on test set
+        model.eval()
+        total_test_loss = 0.0
+        with torch.no_grad():
+            for h_noise, h_label in test_loader:
+                h_noise = h_noise.to(device)
+                h_label = h_label.to(device)
+                U_pred, s_pred, V_pred = model(h_noise)
+                test_loss = loss_fn(U_pred, s_pred, V_pred, h_label)
+                total_test_loss += test_loss.item()
+
+        mean_test_loss = total_test_loss / len(test_loader)
+        print(f"Epoch [{epoch + 1}/{NUM_EPOCHS}], Test Loss: {mean_test_loss:.4f}")
+
+        # Save best model
+        if mean_test_loss < best_loss:
+            best_loss = mean_test_loss
+            best_state_dict = model.state_dict()  # Shallow copy (fine for PyTorch)
 
     print("--- Training Finished ---")
-    torch.save(model.state_dict(), 'SVDNet_model.pth')
+    print(f"✅ Best Mean Test Loss: {best_loss:.4f}")
 
-    model.eval()
-    total_test_loss = 0
-    with torch.no_grad():
-        for h_noise, h_label in test_loader:
-            h_noise = h_noise.to(device)
-            h_label = h_label.to(device)
-            U_pred, s_pred, V_pred = model(h_noise)
-            loss = loss_fn(U_pred, s_pred, V_pred, h_label)
-            total_test_loss += loss.item()
-
-    print(f"Mean Test Loss: {total_test_loss / len(test_loader):.4f}")
+    # Restore best model and save it
+    model.load_state_dict(state_dict = best_state_dict)
 
 
 if __name__ == "__main__":
@@ -242,10 +250,11 @@ if __name__ == "__main__":
     print(f"Using device: {device}")
 
     model_path = 'SVDNet_model.pth'
-    model = SVDNet3Layer(M=M, N=N, r=r).to(device)
+    model = SVDNet3C2L(M=M, N=N, r=r).to(device)
     train(model,
           test_data_path=f'./CompetitionData1/Round1TrainData1.npy',
-          label_data_path=f'./CompetitionData1/Round1TrainLabel1.npy')
+          label_data_path=f'./CompetitionData1/Round1TrainLabel1.npy',
+          model_name='SVDNet3C2L')
     for i in range(1, 4):
         test_data_path = f'./CompetitionData1/Round1TestData{i}.npy'
         test_model(model, test_data_path, f"submission/{i}")
