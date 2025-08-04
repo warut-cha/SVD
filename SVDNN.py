@@ -6,16 +6,16 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 
-from models.SVD_3layer import SVDNet3C2L, SVDNet3Layer
+from models.SVD_3layer import SVDNet3C2L, SVDNet3Layer, SVDNetAvg, SVDNetDeep
 from models.SVD_prune import SVDNetPrune
 from test_SVDNN import test_model
 
 
 BATCH_SIZE = 64
 TEST_RATIO = 0.2
-NUM_EPOCHS = 40
+NUM_EPOCHS = 200
 LEARNING_RATE = 1e-4
-M, N, Q, r = 64, 64, 2, 32
+M, N, Q, r = 64, 64, 2, 8
 
 
 def complex_matmul(A, B):
@@ -114,6 +114,16 @@ class ApproximationErrorLoss(nn.Module):
     def __init__(self):
         super(ApproximationErrorLoss, self).__init__()
 
+
+    def singular_value_order_penalty(self, s: torch.Tensor) -> torch.Tensor:
+        """
+        Penalizes non-monotonic singular values. s shape: (batch, r)
+        """
+        diff = s[:, :-1] - s[:, 1:]  # Should be ≥ 0 if properly ordered
+        penalty = torch.relu(-diff)  # Penalize if s[i] < s[i+1]
+        return penalty.mean()
+
+
     def forward(self, U, s, V, H_label):
         # H_label is of shape (batch, M, N, 2)
         # U is (batch, M, r, 2), s is (batch, r), V is (batch, N, r, 2)
@@ -150,6 +160,8 @@ class ApproximationErrorLoss(nn.Module):
 
         ortho_loss_U = torch.norm(u_err_flat, p=2, dim=1).mean()
         ortho_loss_V = torch.norm(v_err_flat, p=2, dim=1).mean()
+
+        # order_penalty = self.singular_value_order_penalty(s)
 
         total_loss = reconstruction_loss + ortho_loss_U + ortho_loss_V
         return total_loss
@@ -215,13 +227,13 @@ def train(model: nn.Module, test_data_path: str, label_data_path: str, model_nam
     device = next(model.parameters()).device
 
     x = 1
-    # train_np = np.load(test_data_path)  # y = Hr + noise
-    # label_np = np.load(label_data_path)
-    all_data_np, all_labels_np = load_combined_data()
+    train_np = np.load(test_data_path)  # y = Hr + noise
+    label_np = np.load(label_data_path)
+    # all_data_np, all_labels_np = load_combined_data()
 
     # 2. Split into training and testing sets
     train_np, test_np, train_labels_np, test_labels_np = train_test_split(
-        all_data_np, all_labels_np, test_size=TEST_RATIO
+        train_np, label_np, test_size=TEST_RATIO
     )
 
     mean = np.mean(train_np)
@@ -283,13 +295,17 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    model_path = 'SVDNet_model.pth'
-    model = SVDNet3C2L(M=M, N=N, r=r).to(device)
+    model_path = 'submission/SVDNet3C2L.pth'
+    model = SVDNetDeep(M=M, N=N, r=r).to(device)
+
+    model.load_state_dict(torch.load(model_path, map_location=device))
+
     train(model,
           test_data_path=f'./CompetitionData1/Round1TrainData1.npy',
           label_data_path=f'./CompetitionData1/Round1TrainLabel1.npy',
-          model_name='SVDNet3C2L')
+          model_name='SVDNetDeep2')
+    torch.save(model.state_dict(), 'submission/SVDNetDeep2.pth')
     for i in range(1, 4):
         test_data_path = f'./CompetitionData1/Round1TestData{i}.npy'
-        test_model(model, test_data_path, f"submission/{i}")
+        test_model(model, test_data_path, f"submission/{i}", r=r)
 

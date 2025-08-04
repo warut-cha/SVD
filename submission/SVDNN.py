@@ -24,15 +24,16 @@ class SVDNet(nn.Module):
         self.N = N
         self.r = r
 
-        first_conv_out_channels = 8
-        second_conv_out_channels = 16
-        third_conv_out_channels = 32
+        first_conv_out_channels = 4
+        second_conv_out_channels = 8
+        third_conv_out_channels = 16
 
         m_after_conv = M // 8
         n_after_conv = N // 8
         size_after_conv = third_conv_out_channels * m_after_conv * n_after_conv
 
         size_after_fc_1 = size_after_conv // 2
+        size_after_fc_2 = size_after_fc_1 // 2
 
         self.backbone = nn.Sequential(
             nn.Conv2d(in_channels=2, out_channels=first_conv_out_channels, kernel_size=3, padding=1),
@@ -53,15 +54,16 @@ class SVDNet(nn.Module):
         self.fc_hidden = nn.Sequential(
             nn.Linear(size_after_conv, size_after_fc_1),
             nn.ReLU(),
+            nn.Linear(size_after_fc_1, size_after_fc_2),
+            nn.ReLU(),
         )
 
-        in_size= size_after_fc_1
+        in_size= size_after_fc_2
         self.u_head = nn.Linear(in_size, M * r * 2)
         self.s_head = nn.Linear(in_size, r)
         self.v_head = nn.Linear(in_size, N * r * 2)
 
         self.s_activation = nn.Softplus()
-
 
     def forward(self, x):
         x = x.permute(0, 3, 1, 2)  # -> (batch, 2, M, N)

@@ -20,9 +20,7 @@ def fix_rank(tensor, target_r, dim):
         return tensor
 
 
-def test_model(model: nn.Module, test_data_path: str, file_name: str):
-    FIXED_R = 32
-
+def test_model(model: nn.Module, test_data_path: str, file_name: str, r: int):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     model.eval()
