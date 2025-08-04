@@ -235,7 +235,8 @@ def train(model: nn.Module, test_data_path: str, label_data_path: str, model_nam
 
     loss_fn = ApproximationErrorLoss().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS + 1)
+    
     best_loss = float('inf')
     best_state_dict = None
 
@@ -274,11 +275,12 @@ def train(model: nn.Module, test_data_path: str, label_data_path: str, model_nam
 
     print("--- Training Finished ---")
     print(f"✅ Best Mean Test Loss: {best_loss:.4f}")
-
+    
+    scheduler.step()
     # Restore best model and save it
     model.load_state_dict(state_dict = best_state_dict)
 
-
+    
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -292,4 +294,5 @@ if __name__ == "__main__":
     for i in range(1, 4):
         test_data_path = f'./CompetitionData1/Round1TestData{i}.npy'
         test_model(model, test_data_path, f"submission/{i}")
+
 
