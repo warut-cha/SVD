@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch.utils.data import DataLoader, TensorDataset, Dataset
-from tqdm import tqdm
-from sklearn.model_selection import train_test_split
 from torch.profiler import profile, ProfilerActivity
 
 from models.SVD_3depth import SVDNet3LayerD
@@ -13,12 +11,33 @@ from models.SVD_prune import SVDNetPrune
 # --- Constants ---
 BATCH_SIZE = 64
 TEST_RATIO = 0.2
-NUM_EPOCHS = 30
+NUM_EPOCHS = 1
 LEARNING_RATE = 1e-4
-M, N, Q, r = 64, 64, 2, 24
+M, N, Q, r = 64, 64, 2, 8
 
 
-# --- Functions ---
+# --- Utility Functions ---
+
+def split_data_numpy(data, labels, test_ratio=0.2, seed=42):
+    """
+    Splits numpy arrays into training and testing sets without sklearn.
+    """
+    np.random.seed(seed)
+
+    num_samples = data.shape[0]
+    indices = np.arange(num_samples)
+    np.random.shuffle(indices)
+
+    split_idx = int(num_samples * (1 - test_ratio))
+
+    train_indices = indices[:split_idx]
+    test_indices = indices[split_idx:]
+
+    train_data, test_data = data[train_indices], data[test_indices]
+    train_labels, test_labels = labels[train_indices], labels[test_indices]
+
+    return train_data, test_data, train_labels, test_labels
+
 
 @torch.jit.script
 def complex_matmul_fused(A, B):
@@ -93,7 +112,7 @@ def load_combined_data():
     return combined_train, combined_label
 
 
-# --- Dataset & Loss ---
+# --- Dataset & Loss Classes ---
 
 class NormalizedChannelDataset(Dataset):
     def __init__(self, data, labels, mean, std):
@@ -148,7 +167,7 @@ class ApproximationErrorLoss(nn.Module):
         return reconstruction_loss + ortho_loss_U + ortho_loss_V
 
 
-# --- Main Body ---
+# --- Core Logic ---
 
 def train(model: nn.Module):
     """Trains the SVDNet model."""
@@ -156,8 +175,9 @@ def train(model: nn.Module):
 
     all_data_np, all_labels_np = load_combined_data()
 
-    train_np, test_np, train_labels_np, test_labels_np = train_test_split(
-        all_data_np, all_labels_np, test_size=TEST_RATIO, random_state=42
+    # Use the new NumPy-based split function
+    train_np, test_np, train_labels_np, test_labels_np = split_data_numpy(
+        all_data_np, all_labels_np, test_ratio=TEST_RATIO, seed=42
     )
 
     mean = np.mean(train_np)
@@ -178,7 +198,11 @@ def train(model: nn.Module):
     print("--- Starting Training ---")
     for epoch in range(NUM_EPOCHS):
         model.train()
-        for h_noise, h_label in tqdm(train_dataloader, desc=f"Epoch {epoch + 1}/{NUM_EPOCHS}"):
+
+        num_batches = len(train_dataloader)
+        print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
+
+        for i, (h_noise, h_label) in enumerate(train_dataloader):
             h_noise, h_label = h_noise.to(device), h_label.to(device)
 
             optimizer.zero_grad()
@@ -186,6 +210,11 @@ def train(model: nn.Module):
             loss = loss_fn(U_pred, s_pred, V_pred, h_label)
             loss.backward()
             optimizer.step()
+
+            print(f"  Batch {i + 1}/{num_batches} processed...", end='\r')
+
+        # Clear the line after the epoch is done
+        print(" " * 50, end='\r')
 
         model.eval()
         total_test_loss = 0.0
@@ -237,7 +266,7 @@ def test_model(model: nn.Module, test_data_path: str, file_name: str):
     print(f" Saved predictions to {file_name}.npz")
 
 
-# --- Execution ---
+# --- Main Execution ---
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
